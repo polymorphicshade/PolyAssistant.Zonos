@@ -1,11 +1,15 @@
+import os
 import torch
 import torchaudio
 import gradio as gr
 from os import getenv
-
 from zonos.model import Zonos, DEFAULT_BACKBONE_CLS as ZonosBackbone
 from zonos.conditioning import make_cond_dict, supported_language_codes
 from zonos.utils import DEFAULT_DEVICE as device
+import io
+from flask import Flask, request, jsonify, Response
+import threading
+import tempfile
 
 CURRENT_MODEL_TYPE = None
 CURRENT_MODEL = None
@@ -13,6 +17,7 @@ CURRENT_MODEL = None
 SPEAKER_EMBEDDING = None
 SPEAKER_AUDIO_PATH = None
 
+app = Flask(__name__)
 
 def load_model_if_needed(model_choice: str):
     global CURRENT_MODEL_TYPE, CURRENT_MODEL
@@ -202,6 +207,228 @@ def generate_audio(
         wav_out = wav_out[0:1, :]
     return (sr_out, wav_out.squeeze().numpy()), seed
 
+def generate_audio_api(
+    model_choice="Zyphra/Zonos-v0.1-transformer",
+    text="Zonos uses eSpeak for text to phoneme conversion!",
+    language="en-us",
+    speaker_audio=None,
+    prefix_audio=None,
+    e1=1.0,
+    e2=0.05,
+    e3=0.05,
+    e4=0.05,
+    e5=0.05,
+    e6=0.05,
+    e7=0.1,
+    e8=0.2,
+    vq_single=0.78,
+    fmax=24000,
+    pitch_std=45.0,
+    speaking_rate=15.0,
+    dnsmos_ovrl=4.0,
+    speaker_noised=False,
+    cfg_scale=2.0,
+    top_p=0.0,
+    top_k=0,
+    min_p=0.0,
+    linear=0.5,
+    confidence=0.4,
+    quadratic=0.0,
+    seed=420,
+    randomize_seed=True,
+    unconditional_keys=["emotion"],
+):
+    speaker_audio_path = None
+    if speaker_audio and hasattr(speaker_audio, 'read'):
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+            tmp.write(speaker_audio.read())
+            speaker_audio_path = tmp.name
+    
+    prefix_audio_path = None
+    if prefix_audio and hasattr(prefix_audio, 'read'):
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+            tmp.write(prefix_audio.read())
+            prefix_audio_path = tmp.name
+    
+    (sr, audio_data), _ = generate_audio(
+        model_choice=model_choice,
+        text=text,
+        language=language,
+        speaker_audio=speaker_audio_path,
+        prefix_audio=prefix_audio_path,
+        e1=e1,
+        e2=e2,
+        e3=e3,
+        e4=e4,
+        e5=e5,
+        e6=e6,
+        e7=e7,
+        e8=e8,
+        vq_single=vq_single,
+        fmax=fmax,
+        pitch_std=pitch_std,
+        speaking_rate=speaking_rate,
+        dnsmos_ovrl=dnsmos_ovrl,
+        speaker_noised=speaker_noised,
+        cfg_scale=cfg_scale,
+        top_p=top_p,
+        top_k=top_k,
+        min_p=min_p,
+        linear=linear,
+        confidence=confidence,
+        quadratic=quadratic,
+        seed=seed,
+        randomize_seed=randomize_seed,
+        unconditional_keys=unconditional_keys,
+    )
+    
+    if speaker_audio_path:
+        os.unlink(speaker_audio_path)
+    if prefix_audio_path:
+        os.unlink(prefix_audio_path)
+    
+    buffer = io.BytesIO()
+    torchaudio.save(buffer, torch.from_numpy(audio_data).unsqueeze(0), sr, format='wav')
+    buffer.seek(0)
+    
+    return buffer.getvalue()
+
+@app.route('/api/generate_audio', methods=['POST'])
+def api_generate_audio():
+    try:
+        data = request.get_json()
+        
+        params = {
+            'model_choice': data.get('model_choice', "Zyphra/Zonos-v0.1-transformer"),
+            'text': data.get('text', "Zonos uses eSpeak for text to phoneme conversion!"),
+            'language': data.get('language', "en-us"),
+            'speaker_audio': data.get('speaker_audio'),
+            'prefix_audio': data.get('prefix_audio', "assets/silence_100ms.wav"),
+            'e1': data.get('e1', 1.0),
+            'e2': data.get('e2', 0.05),
+            'e3': data.get('e3', 0.05),
+            'e4': data.get('e4', 0.05),
+            'e5': data.get('e5', 0.05),
+            'e6': data.get('e6', 0.05),
+            'e7': data.get('e7', 0.1),
+            'e8': data.get('e8', 0.2),
+            'vq_single': data.get('vq_single', 0.78),
+            'fmax': data.get('fmax', 24000),
+            'pitch_std': data.get('pitch_std', 45.0),
+            'speaking_rate': data.get('speaking_rate', 15.0),
+            'dnsmos_ovrl': data.get('dnsmos_ovrl', 4.0),
+            'speaker_noised': data.get('speaker_noised', False),
+            'cfg_scale': data.get('cfg_scale', 2.0),
+            'top_p': data.get('top_p', 0.0),
+            'top_k': data.get('top_k', 0),
+            'min_p': data.get('min_p', 0.0),
+            'linear': data.get('linear', 0.5),
+            'confidence': data.get('confidence', 0.4),
+            'quadratic': data.get('quadratic', 0.0),
+            'seed': data.get('seed', 420),
+            'randomize_seed': data.get('randomize_seed', True),
+            'unconditional_keys': data.get('unconditional_keys', ["emotion"]),
+        }
+        
+        (sr, audio_data), seed = generate_audio(**params)
+        
+        audio_list = audio_data.tolist()
+        
+        return jsonify({
+            'status': 'success',
+            'sample_rate': sr,
+            'audio_data': audio_list,
+            'seed': seed
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/generate_audio_raw', methods=['POST'])
+def api_generate_audio_raw():
+    try:
+        model_choice = request.form.get('model_choice', "Zyphra/Zonos-v0.1-transformer")
+        text = request.form.get('text', "Zonos uses eSpeak for text to phoneme conversion!")
+        language = request.form.get('language', "en-us")
+        
+        speaker_audio = request.files.get('speaker_audio')
+        prefix_audio = request.files.get('prefix_audio')
+        
+        e1 = float(request.form.get('e1', 1.0))
+        e2 = float(request.form.get('e2', 0.05))
+        e3 = float(request.form.get('e3', 0.05))
+        e4 = float(request.form.get('e4', 0.05))
+        e5 = float(request.form.get('e5', 0.05))
+        e6 = float(request.form.get('e6', 0.05))
+        e7 = float(request.form.get('e7', 0.1))
+        e8 = float(request.form.get('e8', 0.2))
+        vq_single = float(request.form.get('vq_single', 0.78))
+        fmax = float(request.form.get('fmax', 24000))
+        pitch_std = float(request.form.get('pitch_std', 45.0))
+        speaking_rate = float(request.form.get('speaking_rate', 15.0))
+        dnsmos_ovrl = float(request.form.get('dnsmos_ovrl', 4.0))
+        speaker_noised = request.form.get('speaker_noised', 'false').lower() in ('true', '1', 't')
+        cfg_scale = float(request.form.get('cfg_scale', 2.0))
+        top_p = float(request.form.get('top_p', 0.0))
+        top_k = int(request.form.get('top_k', 0))
+        min_p = float(request.form.get('min_p', 0.0))
+        linear = float(request.form.get('linear', 0.5))
+        confidence = float(request.form.get('confidence', 0.4))
+        quadratic = float(request.form.get('quadratic', 0.0))
+        seed = int(request.form.get('seed', 420))
+        randomize_seed = request.form.get('randomize_seed', 'true').lower() in ('true', '1', 't')
+        
+        unconditional_keys_str = request.form.get('unconditional_keys', "emotion")
+        unconditional_keys = [k.strip() for k in unconditional_keys_str.split(',') if k.strip()]
+        
+        wav_data = generate_audio_api(
+            model_choice=model_choice,
+            text=text,
+            language=language,
+            speaker_audio=speaker_audio,
+            prefix_audio=prefix_audio,
+            e1=e1,
+            e2=e2,
+            e3=e3,
+            e4=e4,
+            e5=e5,
+            e6=e6,
+            e7=e7,
+            e8=e8,
+            vq_single=vq_single,
+            fmax=fmax,
+            pitch_std=pitch_std,
+            speaking_rate=speaking_rate,
+            dnsmos_ovrl=dnsmos_ovrl,
+            speaker_noised=speaker_noised,
+            cfg_scale=cfg_scale,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            linear=linear,
+            confidence=confidence,
+            quadratic=quadratic,
+            seed=seed,
+            randomize_seed=randomize_seed,
+            unconditional_keys=unconditional_keys,
+        )
+        
+        return Response(
+            wav_data,
+            mimetype='audio/wav',
+            headers={
+                'Content-Disposition': 'attachment; filename=generated_audio.wav'
+            }
+        )
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 def build_interface():
     supported_models = []
@@ -416,4 +643,12 @@ def build_interface():
 if __name__ == "__main__":
     demo = build_interface()
     share = getenv("GRADIO_SHARE", "False").lower() in ("true", "1", "t")
+
+    flask_thread = threading.Thread(target=app.run, kwargs={
+        "host": "0.0.0.0",
+        "port": 7861
+    })
+    flask_thread.daemon = True
+    flask_thread.start()
+
     demo.launch(server_name="0.0.0.0", server_port=7860, share=share)

@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   zonos:
+    container_name: "zonos"
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: zonos_container
     runtime: nvidia
     network_mode: "host"
     stdin_open: true
@@ -14,3 +12,9 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=0
       - GRADIO_SHARE=False
+    user: 0:0
+    ports:
+        - 7860:7860 # web ui
+        - 7861:7861 # api
+    volumes:
+      - ./zonos:/root/.cache
