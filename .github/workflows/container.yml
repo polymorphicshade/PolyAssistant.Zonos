@@ -1,13 +1,16 @@
 name: container
 
 on:
-  push:
-    # TODO: uncomment when ready
-    # branches:
-    #   - main
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-preview.[0-9]+.[0-9]+"
+  workflow_dispatch
+
+# TODO: no longer needed, but might be useful later
+# on:
+#   push:
+#     # branches:
+#     #   - main
+#     tags:
+#       - "v[0-9]+.[0-9]+.[0-9]+"
+#       - "v[0-9]+.[0-9]+.[0-9]+-preview.[0-9]+.[0-9]+"
 
 jobs:
   build:
