@@ -6,7 +6,8 @@ RUN apt update && \
 
 RUN pip3 install uv packaging wheel setuptools
 RUN uv pip install --system torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-RUN uv pip install --system flash-attn==2.5.0 --no-build-isolation
+#RUN uv pip install --system flash-attn==2.5.0 --no-build-isolation
+RUN uv pip install --system flash-attn --no-cache-dir --no-build-isolation --find-links https://download.pytorch.org/whl/cu121/torch_stable.html
 RUN uv pip install --system Flask
 
 WORKDIR /app
